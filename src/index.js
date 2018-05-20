@@ -2,9 +2,12 @@ import util from 'util'
 import path from 'path'
 import fs from 'fs'
 
-import rocketchat from 'rocketchat';
+import * as incoming from './incoming';
+import * as outgoing from './outgoing';
+import * as umm from './umm';
+import * as actions from './actions';
+import { EventTypes } from './events';
 
-let rocketChatApi = null
 let configFile = null
 
 const saveConfig = (config) => {
@@ -31,7 +34,7 @@ const callback = (logger) => {
 }
 
 const incomingMiddleware = (event, next) => {
-    if (event.platform == 'facebook') {
+    if (event.platform == 'rocketchat') {
         let payload = {
             entry: [{
                 messaging: [event.raw]
@@ -46,51 +49,23 @@ const incomingMiddleware = (event, next) => {
 }
 
 const outgoingMiddleware = (event, next) => {
-    if (event.platform == 'facebook') {
-        // Rebuild response object expected by dialog-api
-        let response = {
-            message_id: event.__id, // Not the real Facebook message ID, but whatever
-            recipient_id: event.raw.to
-        }
-
-        // Rebuild payload object expected by dialog-api
-        let payload
-        if (event.type == 'text') {
-            payload = {
-                message: {
-                    text: event.raw.message,
-                    quick_replies: event.raw.quick_replies
-                }
-            }
-        } else if (event.type == 'template') {
-            payload = {
-                message: {
-                    attachment: {
-                        type: 'template',
-                        payload: event.raw.payload
-                    }
-                }
-            }
-        } else if (event.type == 'attachment') {
-            payload = {
-                message: {
-                    attachment: {
-                        type: event.raw.type,
-                        payload: event.raw
-                    }
-                }
-            }
-        } else {
-            // noop
-        }
-
-        if (payload) {
-            dialog.outgoing(payload, response, callback(event.bp.logger))
-            event.bp.logger.verbose('[botpress-rocketchat] Outgoing message')
-        }
+    if (event.platform !== 'rocketchat') {
+        return next();
     }
-
-    next()
+    switch (event.type) {
+        case 'message':
+            {
+                if (!event.roomId) {
+                    return next('Space name missing in message event');
+                }
+                outgoing.sendMessage(loadConfig(), event.roomId, event.text);
+                break;
+            }
+        default:
+            {
+                return next(`Unsupported event type: ${event.type}`);
+            }
+    }
 }
 
 module.exports = {
@@ -98,9 +73,9 @@ module.exports = {
     config: {
         scheme: { type: 'string', default: 'http', env: 'ROCKETCHAT_SCHEME', required: true },
         host: { type: 'string', default: 'demo.rocket.chat', env: 'ROCKETCHAT_HOST', required: true },
-        port: { type: 'string', default: '80', env: 'ROCKETCHAT_PORT' },
-        user: { type: 'string', default: '', env: 'ROCKETCHAT_USER' },
-        password: { type: 'string', default: '', env: 'ROCKETCHAT_PASSSWORD' }
+        port: { type: 'string', default: '80', env: 'ROCKETCHAT_PORT', required: true },
+        user: { type: 'string', default: '', env: 'ROCKETCHAT_USER', required: true },
+        password: { type: 'string', default: '', env: 'ROCKETCHAT_PASSSWORD', required: true }
     },
 
     init: async function(bp, configuration, helpers) {
@@ -115,9 +90,14 @@ module.exports = {
                 ' This middleware should be placed at the end as it swallows events once sent.'
         });
 
-        let config = loadConfig()
+        bp.rocketchat = {};
+        bp.rocketchat.sendMessage = async(roomId, message) =>
+            bp.middlewares.sendOutgoing(
+                actions.createMessageOutgoingEvent(roomId, message)
+            );
+        bp.rocketchat.createMessage = actions.createMessageOutgoingEvent;
 
-        rocketChatApi = new rocketchat.RocketChatApi(config.scheme, config.host, config.port, config.user, config.password);
+        umm.registerUmmConnector(bp);
     },
 
     ready: async function(bp, configurator) {
@@ -131,9 +111,10 @@ module.exports = {
 
             saveConfig({ scheme, host, port, user, password })
 
-            rocketChatApi = new rocketchat.RocketChatApi(scheme, host, port, user, password);
-
             res.sendStatus(200)
         })
+
+        await outgoing.createClient(loadConfig())
+        incoming.setupIncomingEvents(bp);
     }
 }

@@ -1,28 +1,18 @@
-const handlePromise = (next, promise) => {
-  return promise.then(res => {
-    next()
-    return res
-  })
-  .catch(err => {
-    next(err)
-    throw err
-  })
+import rocketchat from 'rocketchat';
+
+let client = null;
+
+export async function createClient(config) {
+    client = new rocketchat.RocketChatApi(config.scheme, config.host, config.port, config.user, config.password);
 }
 
-const handleText = (event, next, rocketchat) => {
-  if (event.platform !== 'rocketchat' || event.type !== 'text') {
-    return next()
-  }
-
-  const channelId = event.raw.channelId
-  const text = event.text
-  const options = event.raw.options
-
-  return handlePromise(next, rocketchat.sendText(channelId, text, options))
-}
-
-
-module.exports = {
-  'text': handleText,
-  pending: {}
+export async function sendMessage(config, roomId, message) {
+    client.login(config.user, config.password, function(err, body) {
+        client.sendMsg(roomId, message, function(err, body) {
+            if (err)
+                console.log(err);
+            else
+                console.log(body);
+        })
+    });
 }

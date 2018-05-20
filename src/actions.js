@@ -1,14 +1,12 @@
-const createText = (roomId, message) => {
-	return {
-		platform: 'rocketchat',
-		type: 'text',
-		text: message,
-		raw: {
-			
-		}
-	};
-}
+import { EventTypes } from './events';
 
-module.exports = {
-	createText
+export function createMessageOutgoingEvent(roomId, text) {
+    const event = {
+        platform: 'rocketchat',
+        type: EventTypes.message,
+        text: text,
+        roomId: roomId,
+        raw: { roomId, text }
+    }
+    return event;
 }
